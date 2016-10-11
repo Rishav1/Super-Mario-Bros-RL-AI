@@ -17,6 +17,12 @@ function set_state ()
 
 end
 
+function set_level(world,level)
+  memory.writebyte(0x75F,world)
+  memory.writebyte(0x75C,level)
+  memory.writebyte(0x760,level)
+end
+
 function init ()
   set_state()
   -- emu.speedmode("maximum")
@@ -37,11 +43,11 @@ function getTile(dx, dy)
   local subx = math.floor((x%256)/16)
   local suby = math.floor((y - 32)/16)
   local addr = 0x500 + page*13*16+suby*16+subx
- 
+
   if suby >= 13 or suby < 0 then
           return 0
   end
- 
+
   if memory.readbyte(addr) ~= 0 then
           return 1
   else
@@ -58,7 +64,7 @@ function getSprites()
       local ey = memory.readbyte( 0xCF + slot) + 24
       sprites[#sprites+1] = {["x"]=ex,["y"]=ey}
     end
-  end 
+  end
   return sprites
 end
 
@@ -66,16 +72,16 @@ function getInputs()
   getPositions()
   sprites = getSprites()
   local inputs = {}
- 
+
   for dy=-BoxRadius*16,BoxRadius*16,16 do
     for dx=-BoxRadius*16,BoxRadius*16,16 do
       inputs[#inputs+1] = 0
-     
+
       tile = getTile(dx, dy)
       if tile == 1 and marioY+dy < 0x1B0 then
         inputs[#inputs] = 1
       end
-     
+
       for i = 1,#sprites do
         distx = math.abs(sprites[i]["x"] - (marioX+dx))
         disty = math.abs(sprites[i]["y"] - (marioY+dy))
@@ -90,7 +96,7 @@ function getInputs()
 end
 
 function printInput()
-  os.execute("clear")
+  --os.execute("cls")
   Input=getInputs()
   i=1
   box_print=""
@@ -116,6 +122,7 @@ end
 
 
 init()
+set_level(02,07)
 while true do
   printInput()
   if dead() then
