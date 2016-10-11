@@ -107,7 +107,7 @@ end
 
 
 function dead ()
-  if memory.readbyte(0x000E) == 0x0B then
+  if memory.readbyte(0x000E) == 0x0B or memory.readbyte(0x000E) == 0x06 then
     return true;
   else
     return false;
@@ -118,6 +118,7 @@ end
 init()
 while true do
   printInput()
+  emu.message("X = " .. marioX ..", Y = " .. marioY)
   if dead() then
     emu.message("Dead")
     savestate.load(level1_start)
