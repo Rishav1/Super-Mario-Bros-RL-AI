@@ -11,6 +11,7 @@ The project is to make Reinforcement Learning based models that can learn to pla
 #Running#
 
 Make sure fceux executable is in the path.
-'''bash
-fceux ./Super\ Mario\ Bros.\ \(Japan,\ USA\).nes --loadlua ~/full/path/to/AI.lua
-'''
+
+```
+$ fceux ./Super\ Mario\ Bros.\ \(Japan,\ USA\).nes --loadlua ~/full/path/to/AI.lua
+```
