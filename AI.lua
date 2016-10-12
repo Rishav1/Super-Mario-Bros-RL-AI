@@ -1,7 +1,6 @@
 BoxRadius=6
 player1 = 1
-buttons = {["A"]=false,["B"]=false,["up"]=false,["down"]=false,["left"]=false,["right"]=false}
-
+TIMEOUT=10
 -- function set_buttons ()
 --   if (emu.framecount() % 50 == 0) then
 --     jumping = not jumping
@@ -11,11 +10,25 @@ buttons = {["A"]=false,["B"]=false,["up"]=false,["down"]=false,["left"]=false,["
 --   joypad.set(player1, buttons)
 -- end
 
-function set_state ()
-  level1_start = savestate.object(1)
-  savestate.save(level1_start)
-
+function set_imports()
+  print(_VERSION)
+  require("torch")
 end
+
+function set_state ()
+  while(memory.readbyte(0x0772)~=0x03 or memory.readbyte(0x0770)~=0x01) do
+    set_level(02,07)
+    emu.frameadvance()
+  end
+  level_start = savestate.object(1)
+  savestate.save(level_start)
+end
+
+function set_values()
+  Returns={}
+  Policy={}
+end
+
 
 function set_level(world,level)
   memory.writebyte(0x75F,world)
@@ -24,8 +37,10 @@ function set_level(world,level)
 end
 
 function init ()
+  set_imports()
   set_state()
-  -- emu.speedmode("maximum")
+  set_values()
+  emu.speedmode("maximum")
 end
 
 function getPositions()
@@ -53,6 +68,88 @@ function getTile(dx, dy)
   else
           return 0
   end
+end
+
+function getHashReturns(Inputs, Action)
+  local A_value=0
+  for i=1,#Action do
+    A_value=A_value*2
+    if Action[i] then
+      A_value=A_value+1
+    end
+  end
+  local I_value=0
+  for i=1,#Inputs do
+    I_value=I_value*3
+    if Inputs[i]==0 then
+      I_value=I_value+0
+    elseif Inputs[i]==1 then
+      I_value=I_value+1
+    else
+      I_value=I_value+2
+    end
+  end
+  return I_value*math.pow(2,#Action)+A_value
+end
+
+function getButtonsForAction(Action)
+  local action_hash=Action
+  local buttons = {["A"]=false,["B"]=false,["up"]=false,["down"]=false,["left"]=false,["right"]=false}
+  if torch.all(torch.eq(action_hash%2,1)) then
+    buttons["right"]=true
+  else
+    buttons["right"]=false
+  end
+  action_hash=action_hash/2
+  if torch.all(torch.eq(action_hash%2,1)) then
+    buttons["left"]=true
+  else
+    buttons["left"]=false
+  end
+  action_hash=action_hash/2
+  if torch.all(torch.eq(action_hash%2,1)) then
+    buttons["down"]=true
+  else
+    buttons["down"]=false
+  end
+  action_hash=action_hash/2
+  if torch.all(torch.eq(action_hash%2,1)) then
+    buttons["up"]=true
+  else
+    buttons["up"]=false
+  end
+  action_hash=action_hash/2
+  if torch.all(torch.eq(action_hash%2,1)) then
+    buttons["B"]=true
+  else
+    buttons["B"]=false
+  end
+  action_hash=action_hash/2
+  if torch.all(torch.eq(action_hash%2,1)) then
+    buttons["A"]=true
+  else
+    buttons["A"]=false
+  end
+  action_hash=action_hash/2
+  if not torch.all(torch.eq(action_hash,0)) then
+    eum.message("error, set button for hash didn't receive correct value\n")
+  end
+  return buttons
+end
+
+function getHashPolicy(Inputs)
+  local I_value=0
+  for i=1,#Inputs do
+    I_value=I_value*3
+    if Inputs[i]==0 then
+      I_value=I_value+0
+    elseif Inputs[i]==1 then
+      I_value=I_value+1
+    else
+      I_value=I_value+2
+    end
+  end
+  return I_value
 end
 
 function getSprites()
@@ -96,7 +193,7 @@ function getInputs()
 end
 
 function printInput()
-  --os.execute("cls")
+  os.execute("clear")
   Input=getInputs()
   i=1
   box_print=""
@@ -110,6 +207,15 @@ function printInput()
   print(box_print)
 end
 
+function generateAction(Inputs)
+  local action_taken
+  if Policy[getHashPolicy(Inputs)]==nil then
+    action_taken=torch.multinomial(torch.ones(1,math.pow(2,6)),1)
+  else
+    action_taken=torch.multinomial(torch.Tensor(Policy[getHashPolicy(Inputs)]),1)
+  end
+  return action_taken-1
+end
 
 
 function dead ()
@@ -120,15 +226,42 @@ function dead ()
   end
 end
 
+function run_episode()
+  local memory={}
+  local state = {}
+  while true do
+    state=getInputs()
+    joypad.set(player1,getButtonsForAction(generateAction(state)))
+    memory[#memory+1]={state,generateAction(state)}
+    print(generateAction(state))
+    if dead() then
+      emu.message("Dead")
+      break
+    end
+    emu.frameadvance()
+    local timeout=TIMEOUT
+    while(getHashPolicy(getInputs())==getHashPolicy(state)) do
+      emu.frameadvance()
+      if timeout==0 then
+        break;
+      end
+      timeout = timeout-1
+    end
+  end
+  return memory
+end
+
 
 init()
-set_level(02,07)
-while true do
-  printInput()
-  emu.message("X = " .. marioX ..", Y = " .. marioY)
-  if dead() then
-    emu.message("Dead")
-    savestate.load(level1_start)
-  end
-  emu.frameadvance()
-end
+run_episode()
+
+-- while true do
+--   printInput()
+--   -- getPositions()
+--   emu.message("X = " .. marioX ..", Y = " .. marioY)
+--   if dead() then
+--     emu.message("Dead")
+--     savestate.load(level_start)
+--   end
+--   emu.frameadvance()
+-- end
