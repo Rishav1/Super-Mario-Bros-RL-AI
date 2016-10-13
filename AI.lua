@@ -1,9 +1,9 @@
 BoxRadius=6
 player1 = 1
-TIMEOUT=100
-TIMEOUT_AIR=200
+TIMEOUT=200
+TIMEOUT_AIR=20
 EPSILON=0.5
-INF_RUNS=10000
+INF_RUNS=1
 
 function set_imports()
   print(_VERSION)
@@ -67,20 +67,13 @@ function getTile(dx, dy)
 end
 
 function getHashReturns(Inputs, Action)
-  return getHashPolicy(Inputs)*math.pow(2,6)+Action
+  return getHashPolicy(Inputs)..Action
 end
 
 function getHashPolicy(Inputs)
-  local I_value=0
+  local I_value=""
   for i=1,#Inputs do
-    I_value=I_value*3
-    if Inputs[i]==0 then
-      I_value=I_value+0
-    elseif Inputs[i]==1 then
-      I_value=I_value+1
-    else
-      I_value=I_value+2
-    end
+    I_value=Inputs[i]..I_value
   end
   return I_value
 end
@@ -90,34 +83,22 @@ function getButtonsForAction(Action)
   local buttons = {["A"]=false,["B"]=false,["up"]=false,["down"]=false,["left"]=false,["right"]=false}
   if action_hash%2==1 then
     buttons["right"]=true
+    buttons["left"]=false
     -- io.write("buttons[\"right\"]=true  ")
   else
     buttons["right"]=false
+    buttons["left"]=true
     -- io.write("buttons[\"right\"]=false  ")
   end
   action_hash=math.floor(action_hash/2)
   if action_hash%2==1 then
-    buttons["left"]=true
-    -- io.write("buttons[\"left\"]=true  ")
-  else
-    buttons["left"]=false
-    -- io.write("buttons[\"left\"]=false  ")
-  end
-  action_hash=math.floor(action_hash/2)
-  if action_hash%2==1 then
     buttons["down"]=true
+    buttons["up"]=false
     -- io.write("buttons[\"down\"]=true  ")
   else
     buttons["down"]=false
-    -- io.write("buttons[\"down\"]=false  ")
-  end
-  action_hash=math.floor(action_hash/2)
-  if action_hash%2==1 then
     buttons["up"]=true
-    -- io.write("buttons[\"up\"]=true  ")
-  else
-    buttons["up"]=false
-    -- io.write("buttons[\"up\"]=false  ")
+    -- io.write("buttons[\"down\"]=false  ")
   end
   action_hash=math.floor(action_hash/2)
   if action_hash%2==1 then
@@ -179,12 +160,11 @@ function getInputs()
       end
     end
   end
-  -- print(inputs)
   return inputs
 end
 
 function printInput()
-  -- os.execute("clear")
+  os.execute("clear")
   Input=getInputs()
   i=1
   box_print=""
@@ -211,16 +191,20 @@ end
 function generateAction(Inputs)
   local action_taken
   if Policy[getHashPolicy(Inputs)]==nil then
-    action_taken=torch.multinomial(torch.ones(1,math.pow(2,6)),1)
+    action_taken=torch.multinomial(torch.ones(1,12),1)  --change this to 16 for enabling both A and B simultaneous press
     action_taken=action_taken[1][1]
   else
-    -- emu.message("found for "..getHashPolicy(Inputs))
+    local x,y=torch.max(torch.Tensor(Policy[getHashPolicy(Inputs)]),1)
+    y= y[1]-1
+
     -- printPolicy(Policy[getHashPolicy(Inputs)])
+    print("Found saved action for "..getHashPolicy(Inputs).." is "..y.. " and Returns is "..getReturnsForPair(Inputs,y))  
     action_taken=torch.multinomial(torch.Tensor(Policy[getHashPolicy(Inputs)]),1)
     action_taken=action_taken[1]
   end
-  -- printInput(Inputs)
-  return action_taken-1
+  action_taken= action_taken-1
+  print("Action taken "..action_taken)
+  return action_taken
 end
 
 function isInAir()
@@ -261,6 +245,7 @@ function run_episode()
 
     while(getHashPolicy(getInputs())==getHashPolicy(state)) do
       joypad.set(player1,getButtonsForAction(action_for_state))
+      -- memory[#memory+1]={state,action_for_state}
       emu.frameadvance()
       if timeout==0 then
         long_idle=true
@@ -270,9 +255,9 @@ function run_episode()
     end
     while(isInAir()) do
       joypad.set(player1,getButtonsForAction(action_for_state))
+      -- memory[#memory+1]={state,action_for_state}
       emu.frameadvance()
       if timeout_air==0 then
-        long_idle=true
         break
       end
       timeout_air = timeout_air-1
@@ -302,53 +287,62 @@ end
 function start_training()
   local Policy_number=1
   while true do
-    print("Policy is "..Policy_number)
-    Policy_number=Policy_number+1
-    Returns={}
+    -- Returns={}
     for i=1,INF_RUNS do
+      print("---------------------------------------------------")
+      print("Policy is "..Policy_number)
+      print("Run is "..i)
       run_memory=run_episode()
-      emu.message("Reward->"..getReward())
-      emu.message("memory size->"..#run_memory)
+      print("Reward->"..getReward())
+      print("memory size->"..#run_memory)
       run_reward=getReward()
+      local new_states=0
       for i=1,#run_memory do
         local hashed_pair=getHashReturns(run_memory[i][1],run_memory[i][2])
         if Returns[hashed_pair]==nil then
+          new_states = new_states + 1
           Returns[hashed_pair]={run_reward,1}
         else
-          Returns[hashed_pair][1]=(Returns[hashed_pair][1]+run_reward)/(Returns[hashed_pair][2] + 1)
+          Returns[hashed_pair][1]=(Returns[hashed_pair][1]+run_reward)/(Returns[hashed_pair][2] + 1) -- For average reward as given in the book
           Returns[hashed_pair][2]=Returns[hashed_pair][2] + 1
+          -- if run_reward>Returns[hashed_pair][1] then  -- For max of the observed rewards, My change to get fast results
+          --   Returns[hashed_pair][1]=run_reward
+          --   Returns[hashed_pair][2]=1
+          -- end
         end
       end
+      print("Number of New States is "..new_states)
       savestate.load(level_start)
       emu.frameadvance()
     end
 
-    local max=-1
-    local optimal_action=-1
 
     for i=1,#run_memory do
       
+      local max=-1
+      local optimal_action=-1
       if Policy[getHashPolicy(run_memory[i][1])]==nil then
         Policy[getHashPolicy(run_memory[i][1])]={}
       end
       
-      for j=0,63 do
+      for j=0,11 do --Max value of action is 11 so that both A and B buttons are never pressed togather, Otherwise keep it 16
         if getReturnsForPair(run_memory[i][1],j) > max then
           max=getReturnsForPair(run_memory[i][1],j)
           optimal_action=j
         end
       end
       
-      -- emu.message("optimal Action "..optimal_action.." for hash "..getHashPolicy(run_memory[i][1]))
+      print("optimal Action "..optimal_action.." for hash "..getHashPolicy(run_memory[i][1]))
       
-      for j=0,63 do
+      for j=0,11 do
         if j==optimal_action then
-          Policy[getHashPolicy(run_memory[i][1])][j+1]= 1 - EPSILON + EPSILON/64
+          Policy[getHashPolicy(run_memory[i][1])][j+1]= 1 - EPSILON + EPSILON/11
         else
-          Policy[getHashPolicy(run_memory[i][1])][j+1]= EPSILON/64
+          Policy[getHashPolicy(run_memory[i][1])][j+1]= EPSILON/11
         end
       end
     end
+    Policy_number=Policy_number+1
   end
 end
 
@@ -356,16 +350,3 @@ end
 init()
 -- run_episode()
 start_training()
--- while true do
---   emu.frameadvance()
---   print(type(getHashReturns(getInputs(),generateAction(getInputs())[1][1])))
--- end
-
-  -- printInput()
-  -- getPositions()
-  -- emu.message("X = " .. marioX ..", Y = " .. marioY)
-  -- if dead() then
-  --   emu.message("Dead")
-  --   savestate.load(level_start)
-  -- end
-  -- emu.frameadvance()
