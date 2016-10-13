@@ -1,8 +1,8 @@
 BoxRadius=6
 player1 = 1
-TIMEOUT=200
-TIMEOUT_AIR=20
-EPSILON=0.5
+TIMEOUT=50
+TIMEOUT_AIR=0
+EPSILON=0.05
 INF_RUNS=1
 
 function set_imports()
@@ -17,7 +17,6 @@ function set_state ()
   end
   level_start = savestate.object(1)
   savestate.save(level_start)
-  emu.frameadvance()
 end
 
 function set_values()
@@ -67,7 +66,7 @@ function getTile(dx, dy)
 end
 
 function getHashReturns(Inputs, Action)
-  return getHashPolicy(Inputs)..Action
+  return getHashPolicy(Inputs).."->"..Action
 end
 
 function getHashPolicy(Inputs)
@@ -80,30 +79,36 @@ end
 
 function getButtonsForAction(Action)
   local action_hash=Action
+  b_str=""
   local buttons = {["A"]=false,["B"]=false,["up"]=false,["down"]=false,["left"]=false,["right"]=false}
   if action_hash%2==1 then
     buttons["right"]=true
     buttons["left"]=false
     -- io.write("buttons[\"right\"]=true  ")
+    b_str=b_str.."right, "
   else
     buttons["right"]=false
     buttons["left"]=true
     -- io.write("buttons[\"right\"]=false  ")
+    b_str=b_str.."left, "
   end
   action_hash=math.floor(action_hash/2)
   if action_hash%2==1 then
-    buttons["down"]=true
+    -- buttons["down"]=true
     buttons["up"]=false
     -- io.write("buttons[\"down\"]=true  ")
+    -- b_str=b_str.."down, "
   else
-    buttons["down"]=false
+    -- buttons["down"]=false
     buttons["up"]=true
     -- io.write("buttons[\"down\"]=false  ")
+    b_str=b_str.."up, "
   end
   action_hash=math.floor(action_hash/2)
   if action_hash%2==1 then
     buttons["B"]=true
     -- io.write("buttons[\"B\"]=true  ")
+    b_str=b_str.."B, "
   else
     buttons["B"]=false
     -- io.write("buttons[\"B\"]=false  ")
@@ -112,6 +117,7 @@ function getButtonsForAction(Action)
   if action_hash%2==1 then
     buttons["A"]=true
     -- io.write("buttons[\"A\"]=true  ")
+    b_str=b_str.."A, "
   else
     buttons["A"]=false
     -- io.write("buttons[\"A\"]=false  \n")
@@ -120,6 +126,7 @@ function getButtonsForAction(Action)
   if not action_hash==0 then
     eum.message("error, set button for hash didn't receive correct value\n")
   end
+  -- emu.message(b_str)
   return buttons
 end
 
@@ -190,20 +197,28 @@ end
 
 function generateAction(Inputs)
   local action_taken
+  g_str=""
   if Policy[getHashPolicy(Inputs)]==nil then
-    action_taken=torch.multinomial(torch.ones(1,12),1)  --change this to 16 for enabling both A and B simultaneous press
-    action_taken=action_taken[1][1]
+    -- action_taken=torch.multinomial(torch.ones(1,12),1)  --change this to 16 for enabling both A and B simultaneous press
+    -- action_taken=action_taken[1][1]
+    action_taken=10
+    g_str=g_str..",new "
   else
+    g_str=g_str..",found "
     local x,y=torch.max(torch.Tensor(Policy[getHashPolicy(Inputs)]),1)
-    y= y[1]-1
-
+    -- y= y[1]-1
     -- printPolicy(Policy[getHashPolicy(Inputs)])
-    print("Found saved action for "..getHashPolicy(Inputs).." is "..y.. " and Returns is "..getReturnsForPair(Inputs,y))  
+    -- print("Found saved action for "..getHashPolicy(Inputs).." is "..y.. " and Returns is "..getReturnsForPair(Inputs,y))  
     action_taken=torch.multinomial(torch.Tensor(Policy[getHashPolicy(Inputs)]),1)
     action_taken=action_taken[1]
+    if action_taken==y[1] then
+      g_str=g_str..",taken "
+    else
+      g_str=g_str..",not taken "
+    end
   end
   action_taken= action_taken-1
-  print("Action taken "..action_taken)
+  -- print("Action taken "..action_taken)
   return action_taken
 end
 
@@ -226,20 +241,22 @@ function isDead ()
 end
 
 function run_episode()
+  maxMario=nil
   local memory={}
   local state = {}
-  local long_idle=false
   while true do
-    long_idle=false
     state=getInputs()
     local action_for_state=generateAction(state)
     joypad.set(player1,getButtonsForAction(action_for_state))
+    emu.message(g_str.."--->"..b_str)
     memory[#memory+1]={state,action_for_state}
     if isDead() then
       emu.message("Dead")
       break
     end
     emu.frameadvance()
+    setReward()
+    local long_idle=false
     local timeout=TIMEOUT
     local timeout_air=TIMEOUT_AIR
 
@@ -247,6 +264,7 @@ function run_episode()
       joypad.set(player1,getButtonsForAction(action_for_state))
       -- memory[#memory+1]={state,action_for_state}
       emu.frameadvance()
+      setReward()
       if timeout==0 then
         long_idle=true
         break
@@ -257,6 +275,7 @@ function run_episode()
       joypad.set(player1,getButtonsForAction(action_for_state))
       -- memory[#memory+1]={state,action_for_state}
       emu.frameadvance()
+      setReward()
       if timeout_air==0 then
         break
       end
@@ -270,10 +289,21 @@ function run_episode()
   return memory
 end
 
+function setReward()
+  local dist = marioX
+  if maxMario==nil then
+    maxMario=marioX
+  else
+    if maxMario<marioX then
+      maxMario=marioX
+    end
+  end
+end
+
 function getReward()
   local time_left=memory.readbyte(0x07F8)*100 + memory.readbyte(0x07F9)*10 + memory.readbyte(0x07FA)
-  local dist = marioX
-  return time_left+dist
+  local dist = maxMario
+  return time_left*dist
 end
 
 function getReturnsForPair(Inputs,Action)
@@ -303,17 +333,16 @@ function start_training()
           new_states = new_states + 1
           Returns[hashed_pair]={run_reward,1}
         else
-          Returns[hashed_pair][1]=(Returns[hashed_pair][1]+run_reward)/(Returns[hashed_pair][2] + 1) -- For average reward as given in the book
-          Returns[hashed_pair][2]=Returns[hashed_pair][2] + 1
-          -- if run_reward>Returns[hashed_pair][1] then  -- For max of the observed rewards, My change to get fast results
-          --   Returns[hashed_pair][1]=run_reward
-          --   Returns[hashed_pair][2]=1
-          -- end
+          -- Returns[hashed_pair][1]=(Returns[hashed_pair][1]+run_reward)/(Returns[hashed_pair][2] + 1) -- For average reward as given in the book
+          -- Returns[hashed_pair][2]=Returns[hashed_pair][2] + 1
+          if run_reward>Returns[hashed_pair][1] then  -- For max of the observed rewards, My change to get fast results
+            Returns[hashed_pair][1]=run_reward
+            Returns[hashed_pair][2]=1
+          end
         end
       end
       print("Number of New States is "..new_states)
       savestate.load(level_start)
-      emu.frameadvance()
     end
 
 
@@ -332,7 +361,7 @@ function start_training()
         end
       end
       
-      print("optimal Action "..optimal_action.." for hash "..getHashPolicy(run_memory[i][1]))
+      -- print("optimal Action "..optimal_action.." for hash "..getHashPolicy(run_memory[i][1]))
       
       for j=0,11 do
         if j==optimal_action then
